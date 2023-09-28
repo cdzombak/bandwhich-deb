@@ -1,0 +1,4 @@
+#/bin/bash
+set -e
+
+setcap cap_sys_ptrace,cap_dac_read_search,cap_net_raw,cap_net_admin+ep /usr/bin/bandwhich

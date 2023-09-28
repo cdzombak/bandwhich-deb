@@ -4,3 +4,6 @@
 --url "https://github.com/cdzombak/bandwhich-deb"
 --maintainer "Chris Dzombak <https://www.dzombak.com>"
 --license "MIT"
+--depends libcap2-bin
+--depends bash
+--after-install ./after-install.sh
