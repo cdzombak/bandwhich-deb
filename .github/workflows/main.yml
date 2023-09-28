@@ -1,0 +1,161 @@
+---
+name: Release Pipeline
+
+"on":
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FPM_VERSION: 1.15.1
+
+jobs:
+
+  versions:
+    name: Get Version Data
+    runs-on: ubuntu-latest
+    steps:
+      - name: Latest Bandwhich
+        id: bandwhich
+        uses: pozetroninc/github-action-get-latest-release@master
+        with:
+          owner: imsnif
+          repo: bandwhich
+          excludes: prerelease, draft
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Last .deb Build
+        id: last_build
+        run: echo "last_deb_build=$(cat LATEST-VERSION)" >> "$GITHUB_OUTPUT"
+    outputs:
+      latest_bandwhich_tag: ${{ steps.bandwhich.outputs.release }}
+      last_deb_build: ${{ steps.last_build.outputs.last_deb_build }}
+
+
+  packages:
+    name: Debian Packages
+    needs: versions
+    if: needs.versions.outputs.latest_bandwhich_tag != needs.versions.outputs.last_deb_build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Bandwhich Binaries
+        shell: bash
+        run: |
+          mkdir -p ./src
+          pushd ./src
+          mkdir -p ./x86_64
+          pushd ./x86_64
+          wget -q "https://github.com/imsnif/bandwhich/releases/download/${{ needs.versions.outputs.latest_bandwhich_tag }}/bandwhich-${{ needs.versions.outputs.latest_bandwhich_tag }}-x86_64-unknown-linux-musl.tar.gz"
+          tar xzvf ./*.tar.gz
+          rm ./*.tar.gz
+          popd
+          ls -lhR
+          popd
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+      - name: Ruby version
+        run: ruby --version
+      - name: Install fpm
+        run: |
+          gem install --no-document fpm -v "$FPM_VERSION"
+
+      - name: Build packages
+        shell: bash
+        run: |
+          VERSION_TAG="${{ needs.versions.outputs.latest_bandwhich_tag }}"
+          VERSION_NO_V="${VERSION_TAG:1}"
+          mkdir -p ./out
+          chmod 0555 ./src/x86_64/bandwhich
+          fpm -t deb -v ${VERSION_NO_V} -p ./out/bandwhich-${VERSION_NO_V}-amd64.deb -a amd64 ./src/x86_64/bandwhich=/usr/bin/bandwhich
+          ls -lh ./out
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v3
+        with:
+          name: Packages
+          path: out/*.deb
+
+      - name: Update LATEST-VERSION
+        shell: bash
+        run: |
+          echo "${{ needs.versions.outputs.latest_bandwhich_tag }}" > ./LATEST-VERSION
+
+      - name: Commit LATEST-VERSION
+        uses: EndBug/add-and-commit@v9
+        with:
+          add: 'LATEST-VERSION'
+          author_name: cdzombak-3p-release-bot
+          author_email: cdzombak-3p-release-bot@users.noreply.github.com
+          message: Update LATEST-VERSION to ${{ needs.versions.outputs.latest_bandwhich_tag }}
+          pathspec_error_handling: exitImmediately
+          push: true
+          tag: "${{ needs.versions.outputs.latest_bandwhich_tag }}"
+
+
+  release:
+    name: GitHub Release
+    needs: [packages, versions]
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Download packages
+        uses: actions/download-artifact@v3
+        with:
+          name: Packages
+          path: out
+      - name: List artifacts
+        working-directory: out
+        run: ls -R
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: out/*.deb
+          prerelease: false
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+          tag_name: "${{ needs.versions.outputs.latest_bandwhich_tag }}"
+
+
+  packagecloud:
+    name: PackageCloud
+    needs: packages
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Download packages
+        uses: actions/download-artifact@v3
+        with:
+          name: Packages
+          path: out
+      - name: List artifacts
+        run: ls -R
+        working-directory: out
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+      - name: Ruby version
+        run: ruby --version
+      - name: Install PackageCloud CLI
+        run: |
+          gem install --no-document package_cloud
+
+      - name: Push to PackageCloud
+        env:
+          PACKAGECLOUD_TOKEN: ${{ secrets.PACKAGECLOUD_TOKEN }}
+        run: |
+          package_cloud push --yes cdzombak/3p/any/any out/*.deb
