@@ -13,7 +13,6 @@ env:
   FPM_VERSION: 1.15.1
 
 jobs:
-
   versions:
     name: Get Version Data
     runs-on: ubuntu-latest
@@ -33,7 +32,6 @@ jobs:
     outputs:
       latest_bandwhich_tag: ${{ steps.bandwhich.outputs.release }}
       last_deb_build: ${{ steps.last_build.outputs.last_deb_build }}
-
 
   packages:
     name: Debian Packages
@@ -62,7 +60,7 @@ jobs:
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.2'
+          ruby-version: "3.2"
           bundler-cache: true
       - name: Ruby version
         run: ruby --version
@@ -94,7 +92,7 @@ jobs:
       - name: Commit LATEST-VERSION
         uses: EndBug/add-and-commit@v9
         with:
-          add: 'LATEST-VERSION'
+          add: "LATEST-VERSION"
           author_name: cdzombak-3p-release-bot
           author_email: cdzombak-3p-release-bot@users.noreply.github.com
           message: Update LATEST-VERSION to ${{ needs.versions.outputs.latest_bandwhich_tag }}
@@ -102,13 +100,11 @@ jobs:
           push: true
           tag: "${{ needs.versions.outputs.latest_bandwhich_tag }}"
 
-
   release:
     name: GitHub Release
     needs: [packages, versions]
     runs-on: ubuntu-latest
     steps:
-
       - name: Download packages
         uses: actions/download-artifact@v3
         with:
@@ -127,13 +123,11 @@ jobs:
           generate_release_notes: false
           tag_name: "${{ needs.versions.outputs.latest_bandwhich_tag }}"
 
-
-  packagecloud:
-    name: PackageCloud
-    needs: packages
+  aptly:
+    name: Aptly
+    needs: [versions, packages]
     runs-on: ubuntu-latest
     steps:
-
       - name: Download packages
         uses: actions/download-artifact@v3
         with:
@@ -143,19 +137,32 @@ jobs:
         run: ls -R
         working-directory: out
 
-      - name: Setup Ruby
-        uses: ruby/setup-ruby@v1
+      - name: Login to Tailscale
+        uses: tailscale/github-action@v2
         with:
-          ruby-version: '3.2'
-          bundler-cache: true
-      - name: Ruby version
-        run: ruby --version
-      - name: Install PackageCloud CLI
-        run: |
-          gem install --no-document package_cloud
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:github-actions
 
-      - name: Push to PackageCloud
-        env:
-          PACKAGECLOUD_TOKEN: ${{ secrets.PACKAGECLOUD_TOKEN }}
+      - name: Push to Aptly Repo
+        shell: bash
         run: |
-          package_cloud push --yes cdzombak/3p/any/any out/*.deb
+          set -x
+          for DEB in out/*.deb; do
+            curl -u "${{ secrets.APTLY_CRED }}" \
+              -fsS -X POST \
+              -F file=@"${DEB}" \
+              "${{ secrets.APTLY_API }}/files/bandwhich-${{ needs.versions.outputs.latest_bandwhich_tag }}"
+          done
+          curl -u "${{ secrets.APTLY_CRED }}" \
+            -fsS -X POST \
+            "${{ secrets.APTLY_API }}/repos/3p/file/bandwhich-${{ needs.versions.outputs.latest_bandwhich_tag }}?forceReplace=1"
+
+      - name: Update Published Aptly Repo
+        run: |
+          set -x
+          curl -u "${{ secrets.APTLY_CRED }}" \
+            -fsS -X PUT \
+            -H 'Content-Type: application/json' \
+            --data '{"ForceOverwrite": true}' \
+            "${{ secrets.APTLY_API }}/publish/s3:dist.cdzombak.net:deb_3p/any?_async=true"
