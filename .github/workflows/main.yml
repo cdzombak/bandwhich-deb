@@ -75,7 +75,7 @@ jobs:
           VERSION_NO_V="${VERSION_TAG:1}"
           mkdir -p ./out
           chmod 0555 ./src/x86_64/bandwhich
-          fpm -t deb -v ${VERSION_NO_V} -p ./out/bandwhich-${VERSION_NO_V}-amd64.deb -a amd64 ./src/x86_64/bandwhich=/usr/bin/bandwhich
+          fpm -t deb -v "${VERSION_NO_V}" -p ./out/bandwhich-"${VERSION_NO_V}"-amd64.deb -a amd64 ./src/x86_64/bandwhich=/usr/bin/bandwhich
           ls -lh ./out
 
       - name: Upload packages
